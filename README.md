@@ -1,0 +1,80 @@
+# Volt3X: Long-Horizon LLM Benchmark for Hardware Fault Detection
+
+An end-to-end evaluation framework and domain-specific dataset designed to benchmark the multi-step reasoning capabilities, physical constraint awareness, and code generation limits of Large Language Models (Gemini 3 Pro) on electrical engineering time-series data.
+
+---
+
+## 📌 Project Overview
+
+This repository evaluates how state-of-the-art AI agents perform on a **long-horizon data science task** grounded in real-world power electronics constraints. 
+
+Using 10 hours of raw voltage and current sensor data from the **Volt3X** programmable DC power supply (9 V nominal, 0–600 mA limit), the objective is to process noisy data, reconstruct dynamic baselines, detect and classify all 14 injected hardware fault events across 5 distinct categories, and accurately compute the total wasted energy in Joules.
+
+### Key Objectives
+1. **Benchmark AI Reasoning:** Expose critical LLM failure modes in multi-step causal logic, physical domain rules, and silent edge-case handling.
+2. **Resilient Evaluation:** Design a crash-proof, contract-aware unit testing harness capable of dynamically evaluating unstructured LLM code outputs without syntax failures.
+3. **Golden Engineering Solution:** Develop a human-expert solution demonstrating robust signal processing (rolling medians), priority-ordered fault classification, and piecewise physics-based energy integration.
+
+---
+
+## 🛠️ Hardware & Dataset Specifications
+
+The dataset models time-series output from an **INA226 sensor** polling a **TPS55289 buck-boost regulator** via a Raspberry Pi Pico (1 Hz sampling rate, 36,000 samples).
+
+| Parameter | Specification | Hardware Source / Rationale |
+| :--- | :--- | :--- |
+| **Nominal Voltage / Current** | 9.0 V / 400 mA | USB-PD 9V Profile / Standard Load |
+| **Hardware Current Limit** | 600 mA | TPS55289 Physical Clamp (`np.clip`) |
+| **Sensor Noise ($\sigma$)** | $\pm$15 mV / $\pm$3 mA | INA226 12-bit ADC / LSB Floor |
+| **Sampling Rate / Duration** | 1 Hz / 36,000 samples | 10 Hours continuous operation |
+| **Ground-Truth Faults** | 14 injected events | Across 5 distinct physical fault classes |
+
+### Injected Fault Classes & Signatures
+* **Voltage Droop (3):** Load surges causing buck-boost recovery lag ($V$ drops 0.8–1.5 V).
+* **Current Spike (4):** Inductive kick / cap charging ($I$ surges +150–200 mA above baseline).
+* **Short Circuit (2):** Output terminal short ($V < 0.3$ V, $I$ clamped at 600 mA maximum).
+* **Overvoltage (2):** Regulator feedback instability ($V$ rises +1.2 to +2.0 V).
+* **Sensor Dropout (3):** MicroPython I2C bus timeout resulting in 47 raw `NaN` positions.
+
+---
+
+## 🏆 Benchmark Results
+
+| Metric | Gemini 3 Pro (Agent) | Golden Solution (Human Expert) |
+| :--- | :--- | :--- |
+| **Total Wasted Energy** | **175.82 J** (Incomplete) | **470.59 J** (Exact Ground Truth) |
+| **Event Detection Count** | 10 out of 14 events | **14 out of 14 events** |
+| **Fault Class Coverage** | 4 / 5 (Missed `current_spike`) | **5 / 5 (All classes detected)** |
+| **Unit Tests Passed** | **6 / 8** | **8 / 8 (100% Pass Rate)** |
+
+---
+
+## 🔍 Key Insights & AI Failure Analysis
+
+Despite passing **6 out of 8 unit tests**, Gemini 3 Pro demonstrated critical failure modes when intersecting code with physical hardware laws:
+
+1. **Physical Constraint Failure (Threshold Exceeding Hardware Limit):** Gemini set its current spike threshold to `0.65 A`. However, the TPS55289 hardware clamp physically limits output to `0.60 A`. Because no data point could physically hit 0.65 A, Gemini completely missed all 4 current spike events.
+2. **Global vs. Dynamic Baseline Contamination:** Gemini calculated baseline voltage using a global mean, which pulled the baseline toward fault values. The Golden Solution utilized a 600-sample rolling median ($center=True$) to reject transient fault outliers.
+3. **Output Contract & Variable Naming Ambiguity:** Gemini generated code using `total_wasted_energy_joules` instead of standard variable contracts. To ensure a fair evaluation, the benchmark harness was built with **Dynamic Variable Resolution** (`globals().get()`), allowing objective grading of mathematical logic rather than syntax penalization.
+
+---
+
+## 🧪 Unit Testing Framework Design
+
+The master test harness (`unit_testbook.ipynb`) includes three core architectural guards to evaluate unpredictable LLM behavior:
+
+* **Dynamic Variable Resolution:** Searches global scope dynamically across multiple energy variable aliases (`total_fault_energy`, `total_wasted_energy_joules`, `total_energy`).
+* **Flexible Column Targeting:** Automatically resolves target DataFrame columns (`fault_type` vs `fault_class`, `is_anomaly` vs `anomaly`).
+* **Global Scope Pre-Flight Guards:** Asserts DataFrame existence prior to execution to prevent cascading errors.
+
+---
+
+## 📁 Repository Structure
+
+```text
+├── agent_notebook.ipynb      # Autonomous code execution & pipeline generated by Gemini 3 Pro
+├── golden_solution.ipynb     # Human-expert data pipeline, dynamic baselining & energy calculation
+├── unit_testbook.ipynb       # Resilient 8-stage automated test harness & evaluation suite
+├── volt3x_sensor_data.csv    # 36,000-sample raw dataset (synthetic sensor log)
+├── KDD_Report.pdf            # Comprehensive academic assessment & failure analysis report
+└── README.md                 # Project documentation
